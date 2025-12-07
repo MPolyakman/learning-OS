@@ -1,0 +1,69 @@
+#include <stdio.h>
+#include <sys/sem.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/shm.h>
+#include <unistd.h>
+#include <string.h>
+
+#define STR_SIZE 255
+
+int main(int argc, char** argv)
+{
+    if (argc != 3) {
+        printf("argc error\n");
+        return 1;
+    }
+
+    char* filename = argv[1];
+    char* resname = argv[2];
+
+    int proj_id = 0b10101010;
+
+    key_t key = ftok("somefile", proj_id);
+    int shmid = shmget(key, STR_SIZE * 3, IPC_CREAT | 0666);
+    char *data = (char *)shmat(shmid, NULL, 0);
+
+    int semid = semget(key, 3, IPC_CREAT | 0666);
+
+    semctl(semid, 0, SETVAL, 1);
+    semctl(semid, 1, SETVAL, 0);
+    semctl(semid, 2, SETVAL, 0);
+
+    FILE* file = fopen(filename, "r");
+    FILE* resfile = fopen(resname, "w");
+    pid_t p = getpid();
+    char buffer[STR_SIZE];
+    char buffer2[STR_SIZE];
+    int i = 0;
+
+    while(1) {
+        if (semctl(semid, 0, GETVAL) == 1) {
+            if (NULL == fgets(buffer, sizeof(buffer) - 1, file) ) {
+                semctl(semid, 1, SETVAL, 2);
+                semctl(semid, 2, SETVAL, 2);
+                break;
+            }
+            ++i;
+            sprintf(buffer2, "%d pid: %d - %s", i, p, buffer);
+            strcpy(data, buffer2);
+            semctl(semid, 0, SETVAL, 0);
+            semctl(semid, 1, SETVAL, 1);
+        }
+
+        if (semctl(semid, 0, GETVAL) == 2) {
+            fprintf(resfile, "%s", data);
+            semctl(semid, 0, SETVAL, 1);
+            strcpy(data, "");
+        }
+    }
+
+    shmdt(shmid);
+    shmctl(shmid, IPC_RMID, NULL);
+
+    semctl(semid, IPC_RMID, NULL);
+
+    fclose(file);
+    fclose(resfile);
+    return 0;
+}
